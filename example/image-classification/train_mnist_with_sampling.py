@@ -6,6 +6,7 @@ import os, sys
 import struct
 import train_model
 import numpy as np
+import logging
 
 def _download(data_dir):
     if not os.path.isdir(data_dir):
@@ -77,14 +78,16 @@ def load_mnist_to_array(dataset, data_dir, network):
     with open(fname_img, 'rb') as fimg:
         magic, num, rows, cols = struct.unpack('>IIII', fimg.read(16))
         if network == 'mlp':
-            img = np.fromfile(fimg, dtype=np.uint8).reshape(lbl.shape[0], 1, rows * cols)
+            img = np.fromfile(fimg, dtype=np.uint8).reshape(lbl.shape[0], rows * cols)
         elif network == 'lenet':
             img = np.fromfile(fimg, dtype=np.uint8).reshape(lbl.shape[0], 1, rows, cols)
+    img = img / float(256) # normalize to 0-1
 
+    logging.info('data shape: {}, label shape: {}'.format(img.shape, lbl.shape))
     return img, lbl
 
 
-def get_iterator(data_shape):
+def get_iterator(data_shape, data_iter='NDArrayIter'):
     def get_iterator_impl(args, kv):
         data_dir = args.data_dir
         if '://' not in args.data_dir:
@@ -94,19 +97,33 @@ def get_iterator(data_shape):
         train_img, train_lbl = load_mnist_to_array('training', data_dir, args.network)
         test_img, test_lbl = load_mnist_to_array('testing', data_dir, args.network)
 
-        train           = DataSamplingIter(
-            data        = train_img,
-            label       = train_lbl,
-            batch_size  = args.batch_size,
-            shuffle     = True,
-            sampling    = True,
-            num_sample_per_label = 8000)
+        if data_iter == 'DataSamplingIter':
+            train           = DataSamplingIter(
+                data        = train_img,
+                label       = train_lbl,
+                batch_size  = args.batch_size,
+                shuffle     = True,
+                sampling    = True,
+                num_sample_per_label = 8000)
 
-        val             = DataSamplingIter(
-            data        = test_img,
-            label       = test_lbl,
-            batch_size  = args.batch_size,
-            sampling    = False)
+            val             = DataSamplingIter(
+                data        = test_img,
+                label       = test_lbl,
+                batch_size  = args.batch_size,
+                sampling    = False)
+        elif data_iter == 'NDArrayIter':
+            train           = mx.io.NDArrayIter(
+                data        = train_img,
+                label       = train_lbl,
+                batch_size  = args.batch_size,
+                shuffle     = True)
+
+            val             = mx.io.NDArrayIter(
+                data        = test_img,
+                label       = test_lbl,
+                batch_size  = args.batch_size)
+
+        logging.info('Use {} as data iterator'.format(data_iter))
 
         return (train, val)
     return get_iterator_impl
@@ -116,6 +133,9 @@ def parse_args():
     parser.add_argument('--network', type=str, default='mlp',
                         choices = ['mlp', 'lenet'],
                         help = 'the cnn to use')
+    parser.add_argument('--data-iter', type=str, default='DataSamplingIter',
+                        choices = ['DataSamplingIter', 'NDArrayIter'],
+                        help = 'the data iterator to use')
     parser.add_argument('--data-dir', type=str, default='mnist/',
                         help='the input data directory')
     parser.add_argument('--gpus', type=str,
@@ -155,4 +175,4 @@ if __name__ == '__main__':
         net = get_lenet()
 
     # train
-    train_model.fit(args, net, get_iterator(data_shape))
+    train_model.fit(args, net, get_iterator(data_shape, args.data_iter))

@@ -27,20 +27,24 @@ class DataSamplingIter(NDArrayIter):
         if self.sampling:
             logging.info('Data set has {} images of {} classes'.format(self.data[0][1].shape[0], np.max(self.label[self.pos_label][1]+1)))
             logging.info('Sampling enabled, random sample {} samples for each class at the beginning of each epoch'.format(num_sample_per_label))
-            self.do_sampling()
 
 
-    def _get_sampling_rates(self, label_name='softmax', num_sample_per_label=5000):
+    def get_label_hist(self, label):
+        assert isinstance(label, np.ndarray)
+        max_label = np.max(label)
+        label_count, _ = np.histogram(label, bins = max_label + 1)
+        return label_count
+
+
+    def _get_sampling_rates(self, label_name='softmax_label', num_sample_per_label=5000):
         label = []
         for idx, pair in enumerate(self.label):
             if pair[0] == label_name:
                 label = pair[1]
                 self.pos_label = idx
-        if label:
-            max_label = np.max(label)
-            self.label_count, _ = np.histogram(label, bins = max_label + 1)
-            assert self.label_count.shape[0] == max_label + 1
-            self.label_sampling_rates = 5000 / self.label_count.astype(np.float)
+        if label != []:
+            self.label_count = self.get_label_hist(label)
+            self.label_sampling_rates = num_sample_per_label / self.label_count.astype(np.float)
             return True
         else:
             logging.warning('No such label {} in self.label, self.label names: {}'.format(label_name, ' '.join([l[0] for l in self.label])))
@@ -48,16 +52,15 @@ class DataSamplingIter(NDArrayIter):
             return False
 
 
-    def _down_sampling(self, label_idx, label_name='softmax'):
+    def _down_sampling(self, label_idx, label_name='softmax_label'):
         rate = self.label_sampling_rates[label_idx]
         label = self.label[self.pos_label][1]
         data_idx = np.where(label == label_idx)[0]
-        rnd = np.random.rand(data_idx.shape)
         rnd_idx = data_idx[np.where(np.random.rand(data_idx.shape[0]) < rate)[0]]
         return rnd_idx
 
 
-    def _up_sampling(self, label_idx, label_name='softmax'):
+    def _up_sampling(self, label_idx, label_name='softmax_label'):
         rate = self.label_sampling_rates[label_idx]
         repeat = np.floor(rate)
         rate = rate - repeat
@@ -68,15 +71,15 @@ class DataSamplingIter(NDArrayIter):
         return np.hstack((repeat_idx, rnd_idx))
 
 
-    def do_sampling(self, label_name='softmax'):
-        allow_data_idx = np.empty((0,))
-        for label_idx in np.range(len(self.label_sampling_rates)):
+    def do_sampling(self, label_name='softmax_label'):
+        allow_data_idx = np.empty((0,), dtype=np.int)
+        for label_idx in np.arange(len(self.label_sampling_rates)):
             if self.label_count[label_idx] == 0: # we have no data with label label_idx
                 continue
             if self.label_sampling_rates[label_idx] >= 1.0:
-                allow_data_idx = np.hstack((allow_data_idx, _up_sampling(label_idx, label_name)))
+                allow_data_idx = np.hstack((allow_data_idx, self._up_sampling(label_idx, label_name)))
             else:
-                allow_data_idx = np.hstack((allow_data_idx, _down_sampling(label_idx, label_name)))
+                allow_data_idx = np.hstack((allow_data_idx, self._down_sampling(label_idx, label_name)))
         np.random.shuffle(allow_data_idx)
         self.sample_idx = allow_data_idx
         self.num_data = self.sample_idx.shape[0]
