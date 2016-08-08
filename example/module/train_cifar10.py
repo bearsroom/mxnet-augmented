@@ -15,7 +15,7 @@ parser.add_argument('--network', type=str, default='inception-bn-28-small',
                     help = 'the cnn to use')
 parser.add_argument('--data-dir', type=str, default=default_data_dir,
                     help='the input data directory')
-parser.add_argument('--gpus', type=str, default='0',
+parser.add_argument('--gpus', type=str,
                     help='the gpus will be used, e.g "0,1,2,3"')
 parser.add_argument('--num-examples', type=int, default=60000,
                     help='the number of training examples')
@@ -52,7 +52,7 @@ def _download(data_dir):
     os.chdir(data_dir)
     if (not os.path.exists('train.rec')) or \
        (not os.path.exists('test.rec')) :
-        os.system("wget http://webdocs.cs.ualberta.ca/~bx3/data/cifar10.zip")
+           os.system("wget http://data.dmlc.ml/mxnet/data/cifar10.zip")
         os.system("unzip -u cifar10.zip")
         os.system("mv cifar/* .; rm -rf cifar; rm cifar10.zip")
     os.chdir(cwd)
@@ -118,7 +118,7 @@ model_prefix = args.model_prefix
 if args.load_epoch is not None:
     assert model_prefix is not None
     logging.info('loading model from %s-%d...' % (model_prefix, args.load_epoch))
-    sym, arg_params, aux_params = mx.model.load_checkpoint(model_prefix, args.load_epoch) 
+    sym, arg_params, aux_params = mx.model.load_checkpoint(model_prefix, args.load_epoch)
 else:
     arg_params = None
     aux_params = None

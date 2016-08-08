@@ -33,9 +33,11 @@ class Module(BaseModule):
         Default is `cpu()`.
     work_load_list : list of number
         Default `None`, indicating uniform workload.
+    fixed_param_names: list of str
+        Default `None`, indicating no network parameters are fixed.
     """
     def __init__(self, symbol, data_names=('data',), label_names=('softmax_label',),
-                 logger=logging, context=ctx.cpu(), work_load_list=None):
+                 logger=logging, context=ctx.cpu(), work_load_list=None, fixed_param_names=None):
         super(Module, self).__init__(logger=logger)
 
         if isinstance(context, ctx.Context):
@@ -54,6 +56,7 @@ class Module(BaseModule):
         arg_names = symbol.list_arguments()
         input_names = data_names + label_names
         self._param_names = [x for x in arg_names if x not in input_names]
+        self._fixed_param_names = fixed_param_names
         self._aux_names = symbol.list_auxiliary_states()
         self._data_names = data_names
         self._label_names = label_names
@@ -169,18 +172,24 @@ class Module(BaseModule):
         def _impl(name, arr, cache):
             """Internal helper for parameter initialization"""
             if cache is not None:
-                if cache.has_key(name):
-                    cache[name].copyto(arr)
+                if name in cache:
+                    cache_arr = cache[name]
+
+                    # just in case the cached array is just the target itself
+                    if cache_arr is not arr:
+                        cache_arr.copyto(arr)
                 else:
-                    assert allow_missing
-                    initializer(name, arr)
+                    if not allow_missing:
+                        raise RuntimeError("%s is not presented" % name)
+                    if initializer != None:
+                        initializer(name, arr)
             else:
                 initializer(name, arr)
 
-        for name, arr in self._arg_params.iteritems():
+        for name, arr in self._arg_params.items():
             _impl(name, arr, arg_params)
 
-        for name, arr in self._aux_params.iteritems():
+        for name, arr in self._aux_params.items():
             _impl(name, arr, aux_params)
 
         self.params_initialized = True
@@ -249,14 +258,13 @@ class Module(BaseModule):
                                                      self._work_load_list, data_shapes,
                                                      label_shapes, self._param_names,
                                                      for_training, inputs_need_grad,
-                                                     shared_group, logger=self.logger)
-
+                                                     shared_group, logger=self.logger,
+                                                     fixed_param_names=self._fixed_param_names)
         if shared_module is not None:
             self.params_initialized = True
             self._arg_params = shared_module._arg_params
             self._aux_params = shared_module._aux_params
-
-        if self.params_initialized:
+        elif self.params_initialized:
             # if the parameters are already initialized, we are re-binding
             # so automatically copy the already initialized params
             self._exec_group.set_params(self._arg_params, self._aux_params)
@@ -294,8 +302,19 @@ class Module(BaseModule):
             batch_size = self._exec_group.batch_size
             if kvstore and kvstore.type == 'dist_sync':
                 batch_size *= kvstore.num_workers
-            optimizer = opt.create(optimizer, rescale_grad=(1.0/batch_size),
-                                   **dict(optimizer_params))
+            idx2name = {}
+            if update_on_kvstore:
+                idx2name.update(enumerate(self._exec_group.param_names))
+            else:
+                for k in range(len(self._context)):
+                    idx2name.update({i*len(self._context)+k: n
+                                     for i, n in enumerate(self._exec_group.param_names)})
+            optimizer_params = dict(optimizer_params)
+            if 'rescale_grad' not in optimizer_params:
+                optimizer_params['rescale_grad'] = 1.0/batch_size
+            optimizer = opt.create(optimizer,
+                                   sym=self.symbol, param_idx2name=idx2name,
+                                   **optimizer_params)
         else:
             assert isinstance(optimizer, opt.Optimizer)
 
@@ -434,3 +453,8 @@ class Module(BaseModule):
         latest parameters from `self._arg_params` and `self._aux_params`.
         """
         self._exec_group.get_params(self._arg_params, self._aux_params)
+
+    def install_monitor(self, mon):
+        """ Install monitor on all executors """
+        assert self.binded
+        self._exec_group.install_monitor(mon)

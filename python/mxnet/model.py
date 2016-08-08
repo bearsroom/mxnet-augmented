@@ -270,10 +270,6 @@ def _train_multi_device(symbol, ctx, arg_names, param_names, aux_names,
             if epoch_size is None or nbatch >= epoch_size:
                 break
 
-        name_value = eval_metric.get_name_value()
-        for name, value in name_value:
-            logger.info('Epoch[%d] Train-%s=%f', epoch, name, value)
-
         toc = time.time()
         logger.info('Epoch[%d] Time cost=%.3f', epoch, (toc - tic))
 
@@ -308,6 +304,7 @@ def _train_multi_device(symbol, ctx, arg_names, param_names, aux_names,
             name_value = eval_metric.get_name_value()
             for name, value in name_value:
                 logger.info('Epoch[%d] Validation-%s=%f', epoch, name, value)
+            eval_data.reset()
     # end of all epochs
     return
 
@@ -611,9 +608,6 @@ class FeedForward(BASE_ESTIMATOR):
 
         i = 0
         for batch in X:
-            if num_batch is not None and i == num_batch:
-                break
-            i += 1
 
             _load_data(batch, data_arrays)
             self._pred_exec.forward(is_train=False)
@@ -628,6 +622,9 @@ class FeedForward(BASE_ESTIMATOR):
                     data_list[j].append(x[0:real_size].asnumpy())
                 for j, x in enumerate(batch.label):
                     label_list[j].append(x[0:real_size].asnumpy())
+            i += 1
+            if num_batch is not None and i == num_batch:
+                break
 
         outputs = [np.concatenate(x) for x in output_list]
         if len(outputs) == 1:
@@ -743,10 +740,10 @@ class FeedForward(BASE_ESTIMATOR):
         if self.sym_gen:
             self.symbol = self.sym_gen(data.default_bucket_key) # pylint: disable=no-member
             self._check_arguments()
+        self.kwargs["sym"] = self.symbol
 
         arg_names, param_names, aux_names = \
                 self._init_params(dict(data.provide_data+data.provide_label))
-        self.kwargs["arg_names"] = arg_names
 
         # setup metric
         if not isinstance(eval_metric, metric.EvalMetric):
@@ -755,6 +752,15 @@ class FeedForward(BASE_ESTIMATOR):
         # create kvstore
         (kvstore, update_on_kvstore) = _create_kvstore(
             kvstore, len(self.ctx), self.arg_params)
+
+        param_idx2name = {}
+        if update_on_kvstore:
+            param_idx2name.update(enumerate(param_names))
+        else:
+            for i, n in enumerate(param_names):
+                for k in range(len(self.ctx)):
+                    param_idx2name[i*len(self.ctx)+k] = n
+        self.kwargs["param_idx2name"] = param_idx2name
 
         # init optmizer
         if isinstance(self.optimizer, str):

@@ -155,6 +155,10 @@ class BucketingModule(BaseModule):
         shared_module : BucketingModule
             Default is `None`. This value is currently not used.
         """
+        # in case we already initialized params, keep it
+        if self.params_initialized:
+            arg_params, aux_params = self.get_params()
+
         # force rebinding is typically used when one want to switch from
         # training to prediction phase.
         if force_rebind:
@@ -178,6 +182,10 @@ class BucketingModule(BaseModule):
         self._curr_module = module
         self._buckets[self._default_bucket_key] = module
 
+        # copy back saved params, if already initialized
+        if self.params_initialized:
+            self.set_params(arg_params, aux_params)
+
     def switch_bucket(self, bucket_key, data_shapes, label_shapes=None):
         """Switch to a different bucket. This will change `self.curr_module`.
 
@@ -191,7 +199,7 @@ class BucketingModule(BaseModule):
             Typically `data_batch.provide_label`.
         """
         assert self.binded, 'call bind before switching bucket'
-        if not self._buckets.has_key(bucket_key):
+        if not bucket_key in self._buckets:
             symbol, data_names, label_names = self._sym_gen(bucket_key)
             module = Module(symbol, data_names, label_names,
                             logger=self.logger, context=self._context,
@@ -228,7 +236,7 @@ class BucketingModule(BaseModule):
 
         self._curr_module.init_optimizer(kvstore, optimizer, optimizer_params,
                                          force_init=force_init)
-        for mod in self._buckets.itervalues():
+        for mod in self._buckets.values():
             if mod is not self._curr_module:
                 mod.borrow_optimizer(self._curr_module)
 
@@ -317,3 +325,9 @@ class BucketingModule(BaseModule):
         """The symbol of the current bucket being used."""
         assert self.binded
         return self._curr_module.symbol
+
+    def install_monitor(self, mon):
+        """ Install monitor on all executors """
+        assert self.binded
+        for mod in self._buckets.values():
+            mod.install_monitor(mon)

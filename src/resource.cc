@@ -22,24 +22,41 @@ struct SpaceAllocator {
   Context ctx;
   // internal handle
   Storage::Handle handle;
+  // internal CPU handle
+  Storage::Handle host_handle;
 
   SpaceAllocator() {
     handle.dptr = nullptr;
     handle.size = 0;
+    host_handle.dptr = nullptr;
+    host_handle.size = 0;
   }
-
-  inline void Release() {
+  inline void ReleaseAll() {
     if (handle.size != 0) {
-      Storage::Get()->Free(handle);
+      Storage::Get()->DirectFree(handle);
       handle.size = 0;
     }
+    if (host_handle.size != 0) {
+      Storage::Get()->DirectFree(host_handle);
+      host_handle.size = 0;
+    }
   }
-
   inline void* GetSpace(size_t size) {
     if (handle.size >= size) return handle.dptr;
-    this->Release();
+    if (handle.size != 0) {
+      Storage::Get()->DirectFree(handle);
+    }
     handle = Storage::Get()->Alloc(size, ctx);
     return handle.dptr;
+  }
+
+  inline void* GetHostSpace(size_t size) {
+    if (host_handle.size >= size) return host_handle.dptr;
+    if (handle.size != 0) {
+      Storage::Get()->DirectFree(host_handle);
+    }
+    host_handle = Storage::Get()->Alloc(size, Context());
+    return host_handle.dptr;
   }
 };
 
@@ -185,7 +202,7 @@ class ResourceManagerImpl : public ResourceManager {
         Engine::Get()->DeleteVariable(
             [r](RunContext rctx){
               SpaceAllocator rcpy = r;
-              MSHADOW_CATCH_ERROR(rcpy.Release());
+              MSHADOW_CATCH_ERROR(rcpy.ReleaseAll());
             }, ctx, resource[i].var);
       }
     }
@@ -226,6 +243,10 @@ class ResourceManagerImpl : public ResourceManager {
 
 void* Resource::get_space_internal(size_t size) const {
   return static_cast<resource::SpaceAllocator*>(ptr_)->GetSpace(size);
+}
+
+void* Resource::get_host_space_internal(size_t size) const {
+  return static_cast<resource::SpaceAllocator*>(ptr_)->GetHostSpace(size);
 }
 
 ResourceManager* ResourceManager::Get() {

@@ -11,8 +11,6 @@ namespace mxnet {
 namespace op {
 template<>
 Operator *CreateOp<cpu>(SoftmaxActivationParam param) {
-  LOG(FATAL) << "Softmax Activation for internal layers is only supported "
-                "on GPU with cuDNN. Use SoftmaxOutput for loss layer.";
   return new SoftmaxActivationOp<cpu>(param);
 }
 
@@ -25,9 +23,9 @@ DMLC_REGISTER_PARAMETER(SoftmaxActivationParam);
 
 MXNET_REGISTER_OP_PROPERTY(SoftmaxActivation, SoftmaxActivationProp)
 .describe("Apply softmax activation to input. This is intended for internal layers. "
-          "For output (loss layer) please use SoftmaxOutput. If type=instance, "
+          "For output (loss layer) please use SoftmaxOutput. If mode=instance, "
           "this operator will compute a softmax for each instance in the batch; "
-          "this is the default mode. If type=channel, this operator will compute "
+          "this is the default mode. If mode=channel, this operator will compute "
           "a num_channel-class softmax at each position of each instance; this can "
           "be used for fully convolutional network, image segmentation, etc.")
 .add_argument("data", "Symbol", "Input data to activation function.")

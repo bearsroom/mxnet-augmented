@@ -4,12 +4,16 @@
  * \brief Utility functions and registries to help quickly build new operators.
  *
  *  Use the register functions in this file when possible to simplify operator creations.
- *  Operators registred in this file will be exposed to both NDArray API and symbolic API.
+ *  Operators registered in this file will be exposed to both NDArray API and symbolic API.
  *
  * \author Tianqi Chen
  */
 #ifndef MXNET_OPERATOR_UTIL_H_
 #define MXNET_OPERATOR_UTIL_H_
+
+#ifdef _MSC_VER
+#pragma warning(disable:4503)  // disable warning: decorated name length exceeded.
+#endif
 
 #include <dmlc/registry.h>
 #include <dmlc/parameter.h>
@@ -52,7 +56,29 @@ struct EnvArguments {
   real_t scalar;
   /*! \brief keyword arguments */
   std::vector<std::pair<std::string, std::string> > kwargs;
+  /*! \brief pointer to the resources requested */
+  std::vector<Resource> resource;
 };
+
+/*!
+ * \brief source function that generate output based on env
+ *  The result container is pre-allocated with the correct shape.
+ * \param env The Environment arguments.
+ * \param ret The containter to store return value.
+ * \param req The requirement to stroe the ret.
+ * \param ctx Runtime context to execute the function.
+ */
+typedef void (*SourceFunction)(const EnvArguments& env,
+                               TBlob* ret,
+                               OpReqType req,
+                               RunContext ctx);
+
+/*!
+ * \brief Shape inference function to get the correct shape.
+ * \param env The Environment arguments.
+ * \return The inferred result shape.
+ */
+typedef TShape (*SourceShapeFunction)(const EnvArguments& env);
 
 /*!
  * \brief Unary function that takes a src and save result to ret.
@@ -226,7 +252,7 @@ class SimpleOpRegEntry {
    *  Default: this is set to be same as the name of operator.
    * \param symbol_name the name of symbolic operator.
    */
-  virtual TSelf& set_symbol_op_name(const std::string& symbol_name) = 0;
+  virtual TSelf& set_symbol_op_name(char const* symbol_name) = 0;
   /*!
    * \brief set number of scalar arguments needed to be passed in env
    *  A function cannot have both kwargs and scalar arguments.
@@ -236,7 +262,7 @@ class SimpleOpRegEntry {
    */
   virtual TSelf& set_enable_scalar(
       bool enable_scalar,
-      SimpleOpScalarOption type_mask = kScalarBeforeArray) = 0;
+      SimpleOpScalarOption type_mask = kArrayBeforeScalar) = 0;
   /*!
    * \brief set whether to enable kwargs
    *  A function cannot have both kwargs and scalar arguments.
@@ -244,6 +270,26 @@ class SimpleOpRegEntry {
    * \param enable_kwargs whether to enable kwargs
    */
   virtual TSelf& set_enable_kwargs(bool enable_kwargs) = 0;
+  /*!
+   * \brief set resource request
+   *  By default there is no resource request.
+   *  The resource will be presented in both forward and backward.
+   * \param reqs the request.
+   */
+  virtual TSelf& set_resource_request(
+      const std::vector<ResourceRequest>& reqs) = 0;
+  /*!
+   * \brief set resource request
+   *  By default there is no resource request.
+   *  The resource will be presented in both forward and backward.
+   * \param req the request.
+   */
+  virtual TSelf& set_resource_request(ResourceRequest req) = 0;
+  /*!
+   * \brief set source inference function.
+   * \param fshapeinfer The source function that peforms the operation.
+   */
+  virtual TSelf& set_shape_function(SourceShapeFunction fshapeinfer) = 0;
   /*!
    * \brief set shape inference function.
    *  Default: out_shape = in_shape
@@ -256,6 +302,16 @@ class SimpleOpRegEntry {
    * \param fshapeinfer The binary function that peforms the operation.
    */
   virtual TSelf& set_shape_function(BinaryShapeFunction fshapeinfer) = 0;
+  /*!
+   * \brief set function of the function to be fsource
+   * \param dev_mask The device mask of the function can act on.
+   * \param fsource The unary function that peforms the operation.
+   * \param register_symbolic Whether register a symbolic operator as well.
+   */
+  virtual TSelf& set_function(
+      int dev_mask,
+      SourceFunction fsource,
+      SimpleOpRegOption register_symbolic = kRegisterSymbolic) = 0;
   /*!
    * \brief set function of the function to be funary
    * \param dev_mask The device mask of the function can act on.
@@ -350,7 +406,7 @@ class SimpleOpRegistry {
    * \param name name of the function
    * \return ref to the registered entry, used to set properties
    */
-  SimpleOpRegEntry &__REGISTER_OR_FIND__(const std::string& name);
+  SimpleOpRegEntry &__REGISTER_OR_FIND__(char const* name);
   /*!
    * \brief Find the entry with corresponding name.
    * \param name name of the function
@@ -393,6 +449,12 @@ class SimpleOpRegistry {
         LOG(FATAL) << "not reached";    \
     }                                   \
   }
+
+/*!
+* \brief Maximum ndim supported for special operators like broadcasting with non contiguous lhs/rhs
+*/
+#define MXNET_SPECIAL_MAX_NDIM 7
+
 
 //--------------------------------------------------------------
 // The following part are API Registration of Simple Operators

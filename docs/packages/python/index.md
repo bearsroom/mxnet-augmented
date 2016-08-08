@@ -1,7 +1,7 @@
 MXNet Python Package
 ====================
 This page contains links to all the python related documents on python package.
-To install the package package, checkout [Build and Installation Instruction](../../how_to/build.md).
+To install the python package, checkout [Build and Installation Instruction](../../how_to/build.md).
 There are three types of documents you can find about mxnet.
 
 * [Tutorials](#tutorials) are self contained materials that introduces a certain use-cases of mxnet.
@@ -17,6 +17,7 @@ Tutorials
 Python API Documents
 --------------------
 * [High Level Model Training Related API](model.md)
+* [The Module API](module.md)
 * [NDArray API](ndarray.md)
 * [Symbolic API](symbol.md)
 * [KVStore API](kvstore.md)
