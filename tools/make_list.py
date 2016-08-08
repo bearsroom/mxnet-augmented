@@ -3,6 +3,22 @@ import random
 import numpy as np
 import argparse
 
+
+def sampling(image_list, num_samples, sigma=0.05):
+    num_images = len(image_list)
+    num_rnd_images = num_images % num_samples
+    repeat = num_images / num_samples
+    repeated = image_list * repeated
+    if num_rnd_images == 0:
+        return repeated
+    else:
+        prob = (num_rnd_images / float(num_images)) + np.random.uniform(-sigma, sigma)
+        for image in image_list:
+            if np.random.uniform() < prob:
+                repeated.append(image)
+        return repeated
+
+
 def list_image(root, recursive, exts):
     image_list = []
     if recursive:
@@ -65,7 +81,7 @@ def main():
         to images in each folder. Otherwise only include images in the root folder\
         and give them label 0.')
     args = parser.parse_args()
-    
+
     make_list(args.prefix, args.root, args.recursive,
         args.exts, args.chunks, args.train_ratio)
 

@@ -71,7 +71,7 @@ def proto2script(proto_file):
             param_string = "num_filter=%d, pad=(%d,%d), kernel=(%d,%d), stride=(%d,%d), no_bias=%s" %\
                 (param.num_output, pad, pad, kernel_size,\
                 kernel_size, stride, stride, not param.bias_term)
-            need_flatten[name] = True
+            need_flatten[name.replace('-', '_')] = True
         if layer[i].type == 'Pooling' or layer[i].type == 17:
             type_string = 'mx.symbol.Pooling'
             param = layer[i].pooling_param
@@ -129,27 +129,29 @@ def proto2script(proto_file):
                 if need_flatten[mapping[bottom[0]]] and type_string == 'mx.symbol.FullyConnected':
                     flatten_name = "flatten_%d" % flatten_count
                     symbol_string += "%s=mx.symbol.Flatten(name='%s', data=%s)\n" %\
-                        (flatten_name, flatten_name, mapping[bottom[0]])
+                        (flatten_name.replace('-', '_'), flatten_name, mapping[bottom[0]])
                     flatten_count += 1
                     need_flatten[flatten_name] = False
-                    bottom[0] = flatten_name
+                    bottom[0] = flatten_name.replace('-', '_')
                     mapping[bottom[0]] = bottom[0]
                 symbol_string += "%s = %s(name='%s', data=%s %s)\n" %\
-                    (name, type_string, name, mapping[bottom[0]], param_string)
+                    (name.replace('-', '_'), type_string, name, mapping[bottom[0]], param_string)
             else:
                 symbol_string += "%s = %s(name='%s', *[%s] %s)\n" %\
-                    (name, type_string, name, ','.join([mapping[x] for x in bottom]), param_string)
+                    (name.replace('-', '_'), type_string, name, ','.join([mapping[x] for x in bottom]), param_string)
         for j in range(len(layer[i].top)):
-            mapping[layer[i].top[j]] = name
+            mapping[layer[i].top[j]] = name.replace('-', '_')
     return symbol_string, output_name
 
-def proto2symbol(proto_file):
+def proto2symbol(proto_file, output_file):
     sym, output_name = proto2script(proto_file)
     sym = "import mxnet as mx\n" \
             + "data = mx.symbol.Variable(name='data')\n" \
             + sym
+    with open(output_file, 'w') as f:
+        f.write(sym)
     exec(sym)
-    exec("ret = " + output_name)
+    exec("ret = %s" % output_name)
     return ret
 
 def main():

@@ -51,7 +51,7 @@ net = importlib.import_module('symbol_' + args.network).get_symbol(10)
 
 # data
 def get_iterator(args, kv):
-    data_shape = (3, 28, 28)
+    data_shape = (3, 32, 32)
     if '://' not in args.data_dir:
         _download(args.data_dir)
 

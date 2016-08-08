@@ -644,7 +644,7 @@ class FeedForward(BASE_ESTIMATOR):
         else:
             return outputs
 
-    def score(self, X, eval_metric='acc', num_batch=None, batch_end_callback=None, reset=True):
+    def score(self, X, eval_metric='acc', num_batch=None, batch_end_callback=None, reset=True, **kwargs):
         """Run the model on X and calculate the score with eval_metric
         Parameters
         ----------
@@ -660,7 +660,7 @@ class FeedForward(BASE_ESTIMATOR):
         """
         # setup metric
         if not isinstance(eval_metric, metric.EvalMetric):
-            eval_metric = metric.create(eval_metric)
+            eval_metric = metric.create(eval_metric, **kwargs)
 
         X = self._init_iter(X, None, is_train=False)
         if reset:

@@ -219,6 +219,83 @@ class F1(EvalMetric):
             self.sum_metric += f1_score
             self.num_inst += 1
 
+class Recall(EvalMetric):
+    """Calculate recall for each class, single-label classification"""
+
+    def __init__(self, **kwargs):
+        #super(Recall, self).__init__('recall')
+        self.name = 'recall'
+        self.num = kwargs['num_classes']
+        self.reset()
+
+
+    def update(self, labels, preds):
+        check_label_shapes(labels, preds)
+
+        for i in range(len(labels)):
+            pred_label = ndarray.argmax_channel(preds[i]).asnumpy().astype('int32')
+            label = labels[i].asnumpy().astype('int32')
+
+            check_label_shapes(label, pred_label)
+
+            for y_pred, y_true in zip(pred_label, label):
+                self.positives[y_true] += 1
+                if y_pred == y_true:
+                    self.true_positives[y_true] += 1
+
+    def reset(self):
+        """Clear the internal statistics to initial state."""
+        self.true_positives = [0] * self.num
+        self.positives = [0] * self.num
+
+    def get(self):
+        """Get the current evaluation result. """
+        recall = [0.0] * self.num
+        for idx in range(self.num):
+            if self.positives[idx] > 0:
+                recall[idx] = self.true_positives[idx] / float(self.positives[idx])
+        return (self.name, recall)
+
+
+class Precision(EvalMetric):
+    """Calculate precision for each class, single-label classification"""
+
+    def __init__(self, **kwargs):
+        #super(Precision, self).__init__('precision')
+        self.name = 'precision'
+        self.num = kwargs['num_classes']
+        self.reset()
+
+    def update(self, labels, preds):
+        check_label_shapes(labels, preds)
+
+        for i in range(len(labels)):
+            pred_label = ndarray.argmax_channel(preds[i]).asnumpy().astype('int32')
+            label = labels[i].asnumpy().astype('int32')
+
+            check_label_shapes(label, pred_label)
+
+            for y_pred, y_true in zip(pred_label, label):
+                if y_pred == y_true:
+                    self.true_positives[y_pred] += 1
+                else:
+                    self.false_positives[y_pred] += 1
+
+    def reset(self):
+        """Clear the internal statistics to initial state."""
+        self.true_positives = [0] * self.num
+        self.false_positives = [0] * self.num
+
+    def get(self):
+        """Get the current evaluation result. """
+        precision = [0.0] * self.num
+        for idx in range(self.num):
+            if (self.true_positives[idx] + self.false_positives[idx]) > 0:
+                precision[idx] = self.true_positives[idx] / float(self.true_positives[idx] + self.false_positives[idx])
+        return (self.name, precision)
+
+
+
 ####################
 # REGRESSION METRICS
 ####################
@@ -385,11 +462,16 @@ def create(metric, **kwargs):
         'mae': MAE,
         'mse': MSE,
         'rmse': RMSE,
-        'top_k_accuracy': TopKAccuracy
+        'top_k_accuracy': TopKAccuracy,
+        'recall': Recall,
+        'precision': Precision,
     }
 
     try:
-        return metrics[metric.lower()](**kwargs)
-    except:
-        raise ValueError("Metric must be either callable or in {}".format(
-            metrics.keys()))
+        if metric.lower() in ['recall', 'precision', 'top_k_accuracy']:
+            return metrics[metric.lower()](**kwargs)
+        else:
+            return metrics[metric.lower()]()
+    except Exception, e:
+        raise ValueError("Metric must be either callable or in {}: {}".format(
+            metrics.keys(), e))

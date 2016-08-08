@@ -9,6 +9,8 @@ try:
 except ImportError:
     import caffe_parse.parse_from_protobuf as parse
     caffe_flag = False
+    print('Cannot import caffe')
+print('caffe_flag: {}'.format(caffe_flag))
 
 def get_caffe_iter(layer_names, layers):
     for layer_idx, layer in enumerate(layers):
@@ -33,31 +35,36 @@ def main():
     parser.add_argument('save_model_name', help='The name of the output model prefix')
     args = parser.parse_args()
 
-    prob = proto2symbol(args.caffe_prototxt)
+    prob = proto2symbol(args.caffe_prototxt, args.save_model_name+'_symbol.py')
 
     layers = ''
     layer_names = ''
 
+    print('Try to load caffemodel')
     if caffe_flag:
+        print('Set mode CPU')
         caffe.set_mode_cpu()
+        print('Loading...')
         net_caffe = caffe.Net(args.caffe_prototxt, args.caffe_model, caffe.TEST)
         layer_names = net_caffe._layer_names
         layers = net_caffe.layers
     else:
         layers = parse.parse_caffemodel(args.caffe_model)
-    
+
+    print('Copy shape')
     arg_shapes, output_shapes, aux_shapes = prob.infer_shape(data=(1,3,224,224))
     arg_names = prob.list_arguments()
     arg_shape_dic = dict(zip(arg_names, arg_shapes))
     arg_params = {}
-    
+
     iter = ''
     if caffe_flag:
         iter = get_caffe_iter(layer_names, layers)
     else:
         iter = get_iter(layers)
     first_conv = True
-    
+
+    print('Converting...')
     for layer_name, layer_type, layer_blobs in iter:
         if layer_type == 'Convolution' or layer_type == 'InnerProduct' or layer_type == 4 or layer_type == 14:
             assert(len(layer_blobs) == 2)
@@ -74,7 +81,7 @@ def main():
             bias = bias.reshape((bias.shape[0], 1))
             weight_name = layer_name + "_weight"
             bias_name = layer_name + "_bias"
-            
+
             if weight_name not in arg_shape_dic:
                 print weight_name + ' not found in arg_shape_dic.'
                 continue
@@ -89,11 +96,13 @@ def main():
             if first_conv and (layer_type == 'Convolution' or layer_type == 4):
                 first_conv = False
 
+    print('Try to load copied mxnet model...')
     model = mx.model.FeedForward(ctx=mx.cpu(), symbol=prob,
             arg_params=arg_params, aux_params={}, num_epoch=1,
             learning_rate=0.05, momentum=0.9, wd=0.0001)
 
     model.save(args.save_model_name)
+    print('Saved. Bye ;-)')
 
 if __name__ == '__main__':
     main()
