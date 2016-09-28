@@ -202,8 +202,9 @@ int main(int argc, char *argv[]) {
     }
     delete fi;
     if (unchanged != 1) {
-      cv::Mat img = cv::imdecode(decode_buf, color_mode);
-      CHECK(img.data != NULL) << "OpenCV decode fail:" << path;
+      try {
+        cv::Mat img = cv::imdecode(decode_buf, color_mode);
+        CHECK(img.data != NULL) << "OpenCV decode fail:" << path;
       cv::Mat res = img;
       if (new_size > 0) {
         if (center_crop) {
@@ -238,6 +239,11 @@ int main(int argc, char *argv[]) {
       blob.resize(bsize + encode_buf.size());
       memcpy(BeginPtr(blob) + bsize,
              BeginPtr(encode_buf), encode_buf.size());
+      }
+      catch (...) { 
+        std::cout << "OpenCV fail: " << path;
+        continue;
+      }
     } else {
       size_t bsize = blob.size();
       blob.resize(bsize + decode_buf.size());

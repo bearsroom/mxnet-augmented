@@ -312,6 +312,14 @@ struct minus_sign {
   }
 };
 
+/*! \brief used for substraction a - b with b >= 0, if b < 0 will return 0*/
+struct minus_or_zero {
+  template<typename DType>
+  MSHADOW_XINLINE static DType Map(DType a, DType b) {
+    return DType(b >= DType(0.0f) ? a - b : DType(0.0f));
+  }
+};
+
 }  // namespace mshadow_op
 }  // namespace op
 }  // namespace mxnet

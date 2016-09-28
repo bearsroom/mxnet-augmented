@@ -17,6 +17,8 @@ Operator *CreateRegressionOutputOp<gpu>(reg_enum::RegressionOutputType type,
       return new RegressionOutputOp<gpu, mshadow::op::identity, mshadow::op::minus>(param);
     case reg_enum::kLogistic:
       return new RegressionOutputOp<gpu, mshadow_op::sigmoid, mshadow::op::minus>(param);
+    case reg_enum::kLogisticWithDrop:
+      return new RegressionOutputOp<gpu, mshadow_op::sigmoid, mshadow_op::minus_or_zero>(param);
     case reg_enum::kMAE:
       return new RegressionOutputOp<gpu, mshadow::op::identity, mshadow_op::minus_sign>(param);
     default:

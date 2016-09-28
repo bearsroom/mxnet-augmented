@@ -51,14 +51,7 @@ def main():
         layers = net_caffe.layers
     else:
         layers = parse.parse_caffemodel(args.caffe_model)
-<<<<<<< HEAD
-
-    print('Copy shape')
-    arg_shapes, output_shapes, aux_shapes = prob.infer_shape(data=(1,3,224,224))
-=======
-
     arg_shapes, output_shapes, aux_shapes = prob.infer_shape(data=tuple(input_dim))
->>>>>>> official/master
     arg_names = prob.list_arguments()
     arg_shape_dic = dict(zip(arg_names, arg_shapes))
     arg_params = {}

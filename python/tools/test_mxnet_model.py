@@ -1,4 +1,6 @@
 
+from metrics import ConfusionMatrix
+from metrics import Metrics
 import find_mxnet
 import mxnet as mx
 import logging
@@ -9,16 +11,15 @@ import sys
 import os
 import time
 import logging
-from multiprocessing import Process, Queue
+from multiprocessing import Process, Queue, Lock
 from data_loader import BatchLoader
-from metrics import Metrics
 import signal
 
 
 processes = []
 pid = None
 BATCH_SIZE = 200
-NUM_PREPROCESSOR = 5
+NUM_PREPROCESSOR = 4
 
 
 def signal_handler(signum, frame):
@@ -32,10 +33,31 @@ def signal_handler(signum, frame):
 
 
 def load_model(model_prefix, num_epoch, batch_size, gpu_id=0):
-    model = mx.model.FeedForward.load(model_prefix, num_epoch, ctx=mx.gpu(gpu_id), numpy_batch_size=batch_size)
-    # plot the network
-    #mx.viz.pot_network(model.symbol, shape={"data": (1, 3, 224, 224)})
+    try:
+        model = mx.model.FeedForward.load(model_prefix, num_epoch, ctx=mx.gpu(gpu_id), numpy_batch_size=batch_size)
+    except Exception, e:
+        logging.error('Error when loading model: {}'.format(e))
+        return None
+    logging.info('model: {}-{}'.format(model_prefix, num_epoch))
+    # warm up with a dummy batch
+    dummy = np.random.random((batch_size, 3, 224, 224))
+    prob = model.predict(dummy)
+    if isinstance(prob, np.ndarray):
+        logging.info('Warm up up up up!')
+    else:
+        raise ValueError('Error when loading model')
     return model
+
+
+def get_partial_symbol(top_feat_name, model, batch_size, gpu_id=0):
+    internals = model.symbol.get_internals()
+    try:
+        feat_symbol = internals[top_feat_name]
+        feat_extractor = mx.model.FeedForward(ctx=mx.gpu(gpu_id), symbol=feat_symbol, numpy_batch_size=batch_size, arg_params=model.arg_params, aux_params=model.aux_params, allow_extra_params=True)
+        return feat_extractor
+    except Exception, e:
+        logging.error('Cannot get symbol with top feature {}: {}'.format(top_feat_name, e))
+        return None
 
 
 def predict(model, batch):
@@ -50,6 +72,8 @@ def get_label_prob(pred, prob, classes, top_k=1):
         probs = np.sort(prob, axis=1)[:,-1]
         return labels, probs
     try:
+        num_classes = len(classes)
+        top_k = min(top_k, num_classes)
         labels = [[classes[p[i]] for i in range(top_k)] for p in pred]
         probs = np.sort(prob, axis=1)[:,::-1][:,:top_k]
         return labels, probs
@@ -58,21 +82,34 @@ def get_label_prob(pred, prob, classes, top_k=1):
         return None, None
 
 
-def predict_worker(proc_id, output_file, classes, model_prefix, num_epoch, batch_size, in_que, gpu_id=0, evaluate=True):
+def predict_worker(proc_id, output_file, classes, model_prefix, num_epoch, batch_size, in_que, lock, gpu_id=0, evaluate=True, partial=False, top_feat_name=None):
+    logging.info('Predictor #{}: Loading model...'.format(proc_id))
     model = load_model(model_prefix, num_epoch, batch_size, gpu_id)
+    if model is None:
+        raise ValueError('No model created! Exit')
+    logging.info('Model loaded')
+    if partial and top_feat_name:
+        batch_size = 1
+        model = get_partial_symbol(top_feat_name, model, batch_size, gpu_id)
+        if model is None:
+            raise ValueError('No model created! Exit')
+
     f = open(output_file, 'w')
     if evaluate:
         evaluator = Metrics(len(classes))
+        cm = ConfusionMatrix(classes)
     batch_idx = 0
     start = time.time()
     while True:
         try:
+            lock.acquire()
             batch = in_que.get()
+            lock.release()
         except MemoryError, e:
-            logging.error('MemoryError: {}, skip')
+            logging.error('Predictor #{}: MemoryError: {}, skip'.format(proc_id))
             continue
         if batch == 'FINISH':
-            logging.info('Predict worker has received all batches, exit')
+            logging.info('Predictor #{} has received all batches, exit'.format(proc_id))
             break
 
         im_names, batch, gt_list = batch
@@ -82,19 +119,19 @@ def predict_worker(proc_id, output_file, classes, model_prefix, num_epoch, batch
             if im_name is None:
                 continue
             top_prob = [str(p) for p in top_prob]
-            #print('{} labels:{} prob:{}'.format(im_name, ','.join(label), ','.join(top_prob)))
             f.write('{} labels:{} prob:{}\n'.format(im_name, ','.join(label), ','.join(top_prob)))
         batch_idx += 1
         if batch_idx % 50 == 0 and batch_idx != 0:
             elapsed = time.time() - start
-            logging.info('Tested {} batches, elapsed {}s'.format(batch_idx, elapsed))
+            logging.info('Predictor #{}: Tested {} batches, elapsed {}s'.format(proc_id, batch_idx, elapsed))
 
         if evaluate:
             assert gt_list is not None and gt_list != [] and gt_list[0] is not None
             top1_int = [p[0] for p in pred]
             assert len(top1_int) == len(gt_list), '{} != {}'.format(len(top1_int), len(gt_list))
             evaluator.update_top1(top1_int, gt_list)
-            evaluator.update_fp_images(top1_int, gt_list, im_names)
+            evaluator.update_fp_images(top1_int, gt_list, prob, im_names)
+            cm.update(top1_int, gt_list)
 
             top5_int = [p[:5] for p in pred]
             assert len(top5_int) == len(gt_list), '{} != {}'.format(len(top5_int), len(gt_list))
@@ -115,26 +152,31 @@ def predict_worker(proc_id, output_file, classes, model_prefix, num_epoch, batch
         fp_images = evaluator.get_fp_images()
         for cls, fp_cls in zip(classes, fp_images):
             for fp in fp_cls:
-                g.write('{} pred: {}, gt: {}\n'.format(fp[0], cls, classes[fp[1]]))
+                g.write('{} pred:{} prob:{} gt:{} prob:{}\n'.format(fp[0], cls, fp[2], classes[fp[1]], fp[3]))
         g.close()
+
+        cm.normalize()
+        plt_name = output_file+'_cm.jpg'
+        cm.draw(plt_name)
 
     f.close()
 
 
-def test(im_list, data_dir, mean_img_file, model_list, output_prefix, classes, batch_size, evaluate=False):
+def test(im_list, data_dir, mean_img_file, model_list, output_prefix, classes, batch_size, gpus, evaluate=False):
     global processes
     assert len(im_list) > 0
 
     data_que_list = [Queue()]
+    lock = Lock()
     # predict_worker
-    for idx in range(len(data_que_list)):
+    logging.info('Initializing {} predictor...'.format(len(gpus)))
+    for idx, gpu_id in enumerate(gpus):
         p = Process(target=predict_worker,
-                    args=(idx, output_prefix+'_results.'+str(idx), classes, model_list[idx][0], model_list[idx][1], batch_size, data_que_list[idx]),
-                    kwargs={'gpu_id': idx, 'evaluate': evaluate})
+                    args=(idx, output_prefix+'_results.'+str(idx), classes, model_list[idx][0], model_list[idx][1], batch_size, data_que_list[0], lock),
+                    kwargs={'gpu_id': gpu_id, 'evaluate': evaluate})
         p.daemon = True
         p.start()
         processes.append(p)
-    logging.info('Loaded model')
 
     # create batch loader
     batch_loader = BatchLoader(im_list, data_dir, mean_img_file, NUM_PREPROCESSOR, data_que_list, batch_size=batch_size, gt_mode=evaluate)
@@ -183,6 +225,7 @@ def parse_args():
     parser.add_argument('--output-prefix', dest='output_prefix', required=True,
                         help='Output file prefix, results will be stored in [output_prefix]_results.x where x a number',
                         default=None, type=str)
+    parser.add_argument('--batch-size', help='Batch size', default=200, type=int)
 
     if len(sys.argv) == 1:
         parser.print_help()
@@ -209,4 +252,11 @@ if __name__ == '__main__':
     logging.info('Test {} images, {} classes'.format(len(im_list), len(classes)))
 
     model_list = [(args.model_prefix, args.num_epoch)]
-    test(im_list, args.data_dir, args.mean_img, model_list, args.output_prefix, classes, BATCH_SIZE, evaluate=args.evaluate)
+    args.gpus = args.gpus.split(',')
+    args.gpus = [int(g) for g in args.gpus]
+    if len(args.gpus) > 1:
+        if args.evaluate:
+            logging.fatal('FATAL: currently evaluation mode does NOT support multi-gpu, exit')
+            sys.exit(1)
+        model_list = model_list * len(args.gpus)
+    test(im_list, args.data_dir, args.mean_img, model_list, args.output_prefix, classes, args.batch_size, args.gpus, evaluate=args.evaluate)

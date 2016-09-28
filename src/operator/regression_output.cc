@@ -17,6 +17,8 @@ Operator *CreateRegressionOutputOp<cpu>(reg_enum::RegressionOutputType type,
       return new RegressionOutputOp<cpu, mshadow::op::identity, mshadow::op::minus>(param);
     case reg_enum::kLogistic:
       return new RegressionOutputOp<cpu, mshadow_op::sigmoid, mshadow::op::minus>(param);
+    case reg_enum::kLogisticWithDrop:
+      return new RegressionOutputOp<cpu, mshadow_op::sigmoid, mshadow_op::minus_or_zero>(param);
     case reg_enum::kMAE:
       return new RegressionOutputOp<cpu, mshadow::op::identity, mshadow_op::minus_sign>(param);
     default:
@@ -50,6 +52,15 @@ MXNET_REGISTER_OP_PROPERTY(LogisticRegressionOutput, RegressionOutputProp<reg_en
 .describe("Use Logistic regression for final output, this is used on final output of a net.\n"
           "Logistic regression is suitable for binary classification "
           "or probability prediction tasks.")
+.add_argument("data", "Symbol", "Input data to function.")
+.add_argument("label", "Symbol", "Input label to function.")
+.add_arguments(RegressionOutputParam::__FIELDS__());
+
+MXNET_REGISTER_OP_PROPERTY(LogisticRegressionWithDropOutput, RegressionOutputProp<reg_enum::kLogisticWithDrop>)
+.describe("Use Logistic regression for final output, this is used on final output of a net.\n"
+          "Logistic regression is suitable for binary classification "
+          "or probability prediction tasks."
+          "this operator can accept labels with negative values as drop label, in this case backprop gradient will be 0")
 .add_argument("data", "Symbol", "Input data to function.")
 .add_argument("label", "Symbol", "Input label to function.")
 .add_arguments(RegressionOutputParam::__FIELDS__());

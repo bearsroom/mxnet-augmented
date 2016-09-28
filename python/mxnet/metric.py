@@ -142,6 +142,61 @@ class Accuracy(EvalMetric):
             self.sum_metric += (pred_label.flat == label.flat).sum()
             self.num_inst += len(pred_label.flat)
 
+class MultiLabelAccuracy(EvalMetric):
+    """Calculate accuracy of multi-label classification, suitable for multiple binary classifier
+       will predict positive if probability >= 0.5
+       support input label format: 1 positive, 0 negative, -1 drop"""
+
+    def __init__(self):
+        super(MultiLabelAccuracy, self).__init__('multi_label_accuracy')
+
+    def update(self, labels, preds):
+        check_label_shapes(labels, preds)
+
+        for i in range(len(labels)):
+            pred_label = preds[i].asnumpy().astype('int32')
+            label = labels[i].asnumpy().astype('int32')
+            real_label_idx = numpy.where(label >= 0)
+
+            check_label_shapes(label, pred_label, shape=1)
+            #print('Label: {}'.format(label))
+            #print('Pred Label: {}'.format(pred_label))
+            for pred, l in zip(pred_label, label):
+                real = numpy.where(l >=0)
+                if numpy.all(pred[real] == l[real]):
+                    self.sum_metric += 1
+            #print(self.sum_metric)
+            #print(label.shape[0])
+            #raise ValueError
+
+            self.num_inst += label.shape[0]
+            #self.sum_metric += len(numpy.where(numpy.logical_and(label >= 0, pred_label == label))[0])
+            #self.num_inst += len(numpy.where(label >= 0)[0])
+
+class AccuracyWithNegativeLabel(EvalMetric):
+    """Calculate accuracy with negative labels,
+       if prediction != abs(negative label), will treat it as true negative sample"""
+
+    def __init__(self):
+        super(AccuracyWithNegativeLabel, self).__init__('accuracy_with_neg')
+
+    def update(self, labels, preds):
+        check_label_shapes(labels, preds)
+
+        for i in range(len(labels)):
+            pred_label = ndarray.argmax_channel(preds[i]).asnumpy().astype('int32')
+            label = labels[i].asnumpy().astype('int32')
+
+            check_label_shapes(label, pred_label)
+
+            for pred, l in zip(pred_label, label):
+                if l >= 0 and pred == l :
+                    self.sum_metric += 1
+                elif l < 0 and pred != abs(l):
+                    self.sum_metric += 1
+
+            self.num_inst += len(pred_label.flat)
+
 class TopKAccuracy(EvalMetric):
     """Calculate top k predictions accuracy"""
 
@@ -454,6 +509,8 @@ def np(numpy_feval, name=None, allow_extra_outputs=False):
     return CustomMetric(feval, name, allow_extra_outputs)
 # pylint: enable=invalid-name
 
+from .multi_label_metric import SubsetAccuracy, HammingLoss, AccuracyExam, RecallExam, PrecisionExam, F1Exam
+
 def create(metric, **kwargs):
     """Create an evaluation metric.
 
@@ -477,6 +534,7 @@ def create(metric, **kwargs):
     metrics = {
         'acc': Accuracy,
         'accuracy': Accuracy,
+        'multi_label_accuracy': MultiLabelAccuracy,
         'ce': CrossEntropy,
         'f1': F1,
         'mae': MAE,
@@ -485,6 +543,14 @@ def create(metric, **kwargs):
         'top_k_accuracy': TopKAccuracy,
         'recall': Recall,
         'precision': Precision,
+        'acc_mul': AccuracyExam,
+        'accuracy_mul': AccuracyExam,
+        'recall_mul': RecallExam,
+        'precision_mul': PrecisionExam,
+        'f1_mul': F1Exam,
+        'hamming': HammingLoss,
+        'acc_subset': SubsetAccuracy,
+        'accuracy_subset': SubsetAccuracy
     }
 
     try:
