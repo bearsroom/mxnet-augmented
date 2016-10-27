@@ -550,7 +550,7 @@ def create(metric, **kwargs):
         'f1_mul': F1Exam,
         'hamming': HammingLoss,
         'acc_subset': SubsetAccuracy,
-        'accuracy_subset': SubsetAccuracy
+        'accuracy_subset': SubsetAccuracy,
     }
 
     try:
