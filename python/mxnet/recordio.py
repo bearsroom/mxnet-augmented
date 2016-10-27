@@ -5,14 +5,16 @@
 from __future__ import absolute_import
 from collections import namedtuple
 
-import ctypes
 import os
+import ctypes
+import struct
+import numbers
+import numpy as np
+
 from .base import _LIB
 from .base import RecordIOHandle
 from .base import check_call
 from .base import c_str
-import struct
-import numpy as np
 try:
     import cv2
     opencv_available = True
@@ -151,10 +153,9 @@ class MXIndexedRecordIO(MXRecordIO):
         check_call(_LIB.MXRecordIOWriterTell(self.handle, ctypes.byref(pos)))
         return pos.value
 
-    def read_idx(self, idx=None):
+    def read_idx(self, idx):
         """Read record with index"""
-        if idx is not None:
-            self.seek(idx)
+        self.seek(idx)
         return self.read()
 
     def write_idx(self, idx, buf):
@@ -180,11 +181,18 @@ def pack(header, s):
     Parameters
     ----------
     header : IRHeader
-        header of the image record
+        header of the image record.
+        header.label can be a number or an array.
     s : str
         string to pack
     """
     header = IRHeader(*header)
+    if isinstance(header.label, numbers.Number):
+        header = header._replace(flag=0)
+    else:
+        label = np.asarray(header.label, dtype=np.float32)
+        header = header._replace(flag=label.size, label=0)
+        s = label.tostring() + s
     s = struct.pack(_IRFormat, *header) + s
     return s
 
@@ -204,7 +212,11 @@ def unpack(s):
         unpacked string
     """
     header = IRHeader(*struct.unpack(_IRFormat, s[:_IRSize]))
-    return header, s[_IRSize:]
+    s = s[_IRSize:]
+    if header.flag > 0:
+        header = header._replace(label=np.fromstring(s, np.float32, header.flag))
+        s = s[header.flag*4:]
+    return header, s
 
 def unpack_img(s, iscolor=-1):
     """unpack a MXImageRecord to image
@@ -236,6 +248,7 @@ def pack_img(header, img, quality=80, img_fmt='.jpg'):
     ----------
     header : IRHeader
         header of the image record
+        header.label can be a number or an array.
     img : numpy.ndarray
         image to pack
     quality : int
@@ -249,12 +262,12 @@ def pack_img(header, img, quality=80, img_fmt='.jpg'):
         The packed string
     """
     assert opencv_available
-    jpg_formats = set(['.jpg', '.jpeg', '.JPG', '.JPEG'])
-    png_formats = set(['.png', '.PNG'])
+    jpg_formats = ['.JPG', '.JPEG']
+    png_formats = ['.PNG']
     encode_params = None
-    if img_fmt in jpg_formats:
+    if img_fmt.upper() in jpg_formats:
         encode_params = [cv2.IMWRITE_JPEG_QUALITY, quality]
-    elif img_fmt in png_formats:
+    elif img_fmt.upper() in png_formats:
         encode_params = [cv2.IMWRITE_PNG_COMPRESSION, quality]
 
     ret, buf = cv2.imencode(img_fmt, img, encode_params)

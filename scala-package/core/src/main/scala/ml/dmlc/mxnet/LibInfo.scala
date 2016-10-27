@@ -230,4 +230,28 @@ class LibInfo {
   @native def mxRandomSeed(seed: Int): Int
 
   @native def mxNotifyShutdown(): Int
+
+  // RecordIO
+  @native def mxRecordIOWriterCreate(uri: String, out: RecordIOHandleRef): Int
+  @native def mxRecordIOReaderCreate(uri: String, out: RecordIOHandleRef): Int
+  @native def mxRecordIOWriterFree(handle: RecordIOHandle): Int
+  @native def mxRecordIOReaderFree(handle: RecordIOHandle): Int
+  @native def mxRecordIOWriterWriteRecord(handle: RecordIOHandle, buf: String, size: Int): Int
+  @native def mxRecordIOReaderReadRecord(handle: RecordIOHandle, buf: RefString): Int
+  @native def mxRecordIOWriterTell(handle: RecordIOHandle, pos: RefInt): Int
+  @native def mxRecordIOReaderSeek(handle: RecordIOHandle, pos: Int): Int
+
+  @native def mxOptimizerFindCreator(key: String, out: OptimizerCreatorRef): Int
+  @native def mxOptimizerCreateOptimizer(creator: OptimizerCreator,
+                                         numParam: Int,
+                                         keys: Array[String],
+                                         vals: Array[String],
+                                         out: OptimizerHandleRef): Int
+  @native def mxOptimizerFree(handle: OptimizerHandle): Int
+  @native def mxOptimizerUpdate(handle: OptimizerHandle,
+                                index: Int,
+                                weight: NDArrayHandle,
+                                grad: NDArrayHandle,
+                                lr: Float,
+                                wd: Float): Int
 }

@@ -7,6 +7,7 @@
 #ifndef MXNET_OPERATOR_CUDNN_RNN_INL_H_
 #define MXNET_OPERATOR_CUDNN_RNN_INL_H_
 
+#include <mxnet/storage.h>
 #include <vector>
 #include <map>
 #include <string>
@@ -72,7 +73,8 @@ class CuDNNRNNOp : public Operator {
       CHECK_EQ(cudnnDestroyFilterDescriptor(w_desc_), CUDNN_STATUS_SUCCESS);
       CHECK_EQ(cudnnDestroyRNNDescriptor(rnn_desc_), CUDNN_STATUS_SUCCESS);
       CHECK_EQ(cudnnDestroyDropoutDescriptor(dropout_desc_), CUDNN_STATUS_SUCCESS);
-      CHECK_EQ(cudaFree(dropout_states_), CUDNN_STATUS_SUCCESS);
+      Storage::Get()->Free(dropout_states_);
+      Storage::Get()->Free(reserve_space_);
     }
   }
 
@@ -102,10 +104,11 @@ class CuDNNRNNOp : public Operator {
 
     DType * cx_ptr = NULL;
     DType * cy_ptr = NULL;
-    if (param_.mode == rnn_enum::kLstm) {
+
+    if (param_.lstm_q_)
       cx_ptr = (in_data[rnn_enum::kStateCell].get<gpu, 3, DType>(s)).dptr_;
+    if (param_.lstm_q_ && param_.state_outputs)
       cy_ptr = (out_data[rnn_enum::kStateCellOut].get<gpu, 3, DType>(s)).dptr_;
-    }
 
     CHECK_EQ(x.CheckContiguous(), true);
     CHECK_EQ(w.CheckContiguous(), true);
@@ -117,7 +120,6 @@ class CuDNNRNNOp : public Operator {
     }
     // Get temp space
     int temp_size = workspace_size_;
-    temp_size += ctx.is_train ? reserve_space_size_ : 0;
     Tensor<gpu, 1, DType> temp_space =
       ctx.requested[rnn_enum::kTempSpace].get_space_typed<gpu, 1, DType>(
                               mshadow::Shape1(temp_size), s);
@@ -141,7 +143,7 @@ class CuDNNRNNOp : public Operator {
                                       cy_ptr,
                                       temp_space.dptr_,
                                       workspace_byte_,
-                                      temp_space.dptr_ + workspace_size_,
+                                      reserve_space_.dptr,
                                       reserve_space_byte_), CUDNN_STATUS_SUCCESS);
     } else {
       // inference mode
@@ -184,7 +186,9 @@ class CuDNNRNNOp : public Operator {
     CHECK_EQ(out_data.size(), out_expected);
     CHECK_EQ(in_grad.size(), in_expected);
     CHECK_EQ(out_grad.size(), out_expected);
-
+    CHECK_EQ(req.size(), in_expected);
+    CHECK_NE(req[rnn_enum::kData], kAddTo) << "AddTo is not supported for data";
+    CHECK_NE(req[rnn_enum::kState], kAddTo) << "AddTo is not supported for state";
     Stream<gpu> *s = ctx.get_stream<gpu>();
     // get input + output tensors
     Tensor<gpu, 3, DType> x = in_data[rnn_enum::kData].get<gpu, 3, DType>(s);
@@ -195,7 +199,9 @@ class CuDNNRNNOp : public Operator {
     Tensor<gpu, 3, DType> dhx = in_grad[rnn_enum::kState].get<gpu, 3, DType>(s);
     Tensor<gpu, 3, DType> y = out_data[rnn_enum::kOut].get<gpu, 3, DType>(s);
     Tensor<gpu, 3, DType> dy = out_grad[rnn_enum::kOut].get<gpu, 3, DType>(s);
-
+    if (req[rnn_enum::kParams] != kAddTo) {
+      dw = mshadow::expr::ScalarExp<DType>(0.0f);
+    }
     // only need kStateOut grad output_states is true
     void * dhy_ptr = NULL;
     if (param_.state_outputs)
@@ -207,6 +213,7 @@ class CuDNNRNNOp : public Operator {
     void * cx_ptr = NULL;
 
     if (param_.mode == rnn_enum::kLstm) {
+      CHECK_NE(req[rnn_enum::kStateCell], kAddTo) << "AddTo is not supported for state cell";
       cx_ptr = (in_data[rnn_enum::kStateCell].get<gpu, 3, DType>(s)).dptr_;
       dcx_ptr = (in_grad[rnn_enum::kStateCell].get<gpu, 3, DType>(s)).dptr_;
     }
@@ -215,8 +222,11 @@ class CuDNNRNNOp : public Operator {
 
     CHECK_EQ(x.CheckContiguous(), true);
     CHECK_EQ(w.CheckContiguous(), true);
+    CHECK_EQ(dw.CheckContiguous(), true);
     CHECK_EQ(hx.CheckContiguous(), true);
+    CHECK_EQ(dhx.CheckContiguous(), true);
     CHECK_EQ(y.CheckContiguous(), true);
+    CHECK_EQ(dy.CheckContiguous(), true);
 
     if (!init_cudnn_) {
       Init(s, in_data, out_data);
@@ -224,7 +234,6 @@ class CuDNNRNNOp : public Operator {
 
     // Get temp space
     int temp_size = workspace_size_;
-    temp_size += ctx.is_train ? reserve_space_size_ : 0;
     Tensor<gpu, 1, DType> temp_space =
       ctx.requested[rnn_enum::kTempSpace].get_space_typed<gpu, 1, DType>(
                               mshadow::Shape1(temp_size), s);
@@ -253,7 +262,7 @@ class CuDNNRNNOp : public Operator {
                                 dcx_ptr,
                                 temp_space.dptr_,
                                 workspace_byte_,
-                                temp_space.dptr_ + workspace_size_,
+                                reserve_space_.dptr,
                                 reserve_space_byte_), CUDNN_STATUS_SUCCESS);
     CHECK_EQ(cudnnRNNBackwardWeights(s->dnn_handle_,
                                     rnn_desc_,
@@ -268,7 +277,7 @@ class CuDNNRNNOp : public Operator {
                                     workspace_byte_,
                                     dw_desc_,
                                     dw.dptr_,
-                                    temp_space.dptr_ + workspace_size_,
+                                    reserve_space_.dptr,
                                     reserve_space_byte_), CUDNN_STATUS_SUCCESS);
   }
 
@@ -414,11 +423,11 @@ class CuDNNRNNOp : public Operator {
       CHECK_EQ(cudnnDropoutGetStatesSize(s->dnn_handle_,
                                         &dropout_byte_), CUDNN_STATUS_SUCCESS);
       dropout_size_ = dropout_byte_ / sizeof(DType);
-      CHECK_EQ(cudaMalloc(&dropout_states_, dropout_byte_), CUDNN_STATUS_SUCCESS);
+      dropout_states_ = Storage::Get()->Alloc(dropout_byte_, Context::GPU());
       CHECK_EQ(cudnnSetDropoutDescriptor(dropout_desc_,
                                         s->dnn_handle_,
                                         param_.p,  // keep probability
-                                        dropout_states_,
+                                        dropout_states_.dptr,
                                         dropout_byte_,
                                         seed_), CUDNN_STATUS_SUCCESS);
       // RNN descriptors
@@ -443,9 +452,10 @@ class CuDNNRNNOp : public Operator {
                                         x_desc_vec_.data(),
                                         &reserve_space_byte_), CUDNN_STATUS_SUCCESS);
       workspace_size_ = workspace_byte_ / sizeof(DType);
-      reserve_space_size_ = reserve_space_byte_ / sizeof(DType);
+      // Allocate the reserve space
+      reserve_space_ = Storage::Get()->Alloc(reserve_space_byte_, Context::GPU());
 
-      // check that number of params are correct
+      // Check that number of params are correct
       size_t cudnn_param_size;
       CHECK_EQ(cudnnGetRNNParamsSize(s->dnn_handle_,
                                     rnn_desc_,
@@ -479,11 +489,10 @@ class CuDNNRNNOp : public Operator {
   cudnnDirectionMode_t direction_;
   cudnnRNNInputMode_t input_mode_;
   cudnnDropoutDescriptor_t dropout_desc_;
-  void *dropout_states_;
+  Storage::Handle dropout_states_, reserve_space_;
   uint64_t seed_ = 1337ull;
   size_t workspace_byte_, reserve_space_byte_, dropout_byte_;
-  int workspace_size_, reserve_space_size_, dropout_size_;
-
+  int workspace_size_, dropout_size_;
   std::vector<cudnnTensorDescriptor_t> x_desc_vec_, y_desc_vec_, dx_desc_vec_, dy_desc_vec_;
   cudnnTensorDescriptor_t hx_desc_, cx_desc_;
   cudnnTensorDescriptor_t hy_desc_, cy_desc_;
