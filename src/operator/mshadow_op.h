@@ -207,6 +207,14 @@ struct sign {
     return DType(DType(0.0f));
   }
 };
+/*! \brief used for generate element of sign (sign(0,.0f) = 1) */
+struct ge_zero {
+  template<typename DType>
+  MSHADOW_XINLINE static DType Map(DType a) {
+    if (a < 0.0f) return DType(-DType(1.0f));
+    if (a >= 0.0f) return DType(DType(1.0f));
+  }
+};
 struct sign_grad {
   template<typename DType>
   MSHADOW_XINLINE static DType Map(DType a) {
