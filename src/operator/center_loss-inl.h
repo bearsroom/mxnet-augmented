@@ -21,8 +21,8 @@ namespace op {
 
 namespace centerloss {
 enum CenterLossOpInputs {kData, kLabel};
-enum CenterLossOpOutputs {kOut};
-enum CenterLossOpAuxiliary {kCenterVec, kCenterDiff};
+enum CenterLossOpOutputs {kOut, kCenterDiff};
+enum CenterLossOpAuxiliary {kCenterVec};
 enum CenterLossOpResource {kTempSpace};
 } // centerloss
 
@@ -57,8 +57,8 @@ class CenterLossOp: public Operator {
       using namespace mshadow;
       using namespace mshadow::expr;
       CHECK_GE(in_data.size(), 2) << "CenterLoss Input: [data, label]";
-      CHECK_EQ(out_data.size(), 1) << "CenterLoss Output: [output]";
-      CHECK_EQ(aux_states.size(), 2) << "CenterLoss Auxiliary states: [center_vec, center_diff]";
+      CHECK_EQ(out_data.size(), 2) << "CenterLoss Output: [output, center_diff]";
+      CHECK_EQ(aux_states.size(), 1) << "CenterLoss Auxiliary states: [center_vec]";
       Stream<xpu> *s = ctx.get_stream<xpu>();
       const TShape& ishape = in_data[centerloss::kData].shape_;
 
@@ -66,8 +66,8 @@ class CenterLossOp: public Operator {
           Shape2(ishape[0], ishape.ProdShape(1, ishape.ndim())), s);
       Tensor<xpu, 1, DType> label = in_data[centerloss::kLabel].get<xpu, 1, DType>(s);
       Tensor<xpu, 1, DType> out = out_data[centerloss::kOut].get<xpu, 1, DType>(s);
+      Tensor<xpu, 2, DType> diff = out_data[centerloss::kCenterDiff].get<xpu, 2, DType>(s);
       Tensor<xpu, 2, DType> center_vec = aux_states[centerloss::kCenterVec].get<xpu, 2, DType>(s);
-      Tensor<xpu, 2, DType> diff = aux_states[centerloss::kCenterDiff].get<xpu, 2, DType>(s);
 
       // calculate distance between input vector and center vector
       Tensor<cpu, 1, DType> workspace = ctx.requested[centerloss::kTempSpace].get_host_space_typed<1, DType>(
@@ -104,14 +104,13 @@ class CenterLossOp: public Operator {
       using namespace mshadow;
       using namespace mshadow::expr;
       CHECK_EQ(in_data.size(), 2) << "CenterLoss Input: [data, label]";
-      CHECK_EQ(out_data.size(), 1);
-      CHECK_EQ(out_grad.size(), 1);
+      CHECK_EQ(out_data.size(), 2);
       CHECK_GE(in_grad.size(), 1) << "in_grad size invalid, expected 1, " << in_grad.size() << " given";
       CHECK_GE(req.size(), 1) << "req size invalid, expected 1, " << req.size() << "given";
       Stream<xpu> *s = ctx.get_stream<xpu>();
 
       Tensor<xpu, 1, DType> label = in_data[centerloss::kLabel].get<xpu, 1, DType>(s);
-      Tensor<xpu, 2, DType> diff = aux_states[centerloss::kCenterDiff].get<xpu, 2, DType>(s);
+      Tensor<xpu, 2, DType> diff = out_data[centerloss::kCenterDiff].get<xpu, 2, DType>(s);
       const TShape& ishape = in_grad[centerloss::kData].shape_;
 
       // gradient of data
@@ -170,11 +169,11 @@ class CenterLossProp : public OperatorProperty {
     }
 
     std::vector<std::string> ListOutputs() const override {
-      return {"output"};
+      return {"output", "center_diff"};
     }
 
     std::vector<std::string> ListAuxiliaryStates() const override {
-      return {"center_vec", "center_diff"};
+      return {"center_vec"};
     }
 
     void Init(const std::vector<std::pair<std::string, std::string> >& kwargs) override {
@@ -209,9 +208,9 @@ class CenterLossProp : public OperatorProperty {
       }
       out_shape->clear();
       out_shape->push_back(Shape1(dshape[0]));
+      out_shape->push_back(Shape2(dshape[0], num_input));
       aux_shape->clear();
       aux_shape->push_back(Shape2(param_.num_classes, num_input));
-      aux_shape->push_back(Shape2(dshape[0], num_input));
       return true;
     }
 
@@ -232,8 +231,8 @@ class CenterLossProp : public OperatorProperty {
       }
       out_type->clear();
       out_type->push_back(dtype);
+      out_type->push_back(dtype);
       aux_type->clear();
-      aux_type->push_back(dtype);
       aux_type->push_back(dtype);
       return true;
     }
@@ -252,7 +251,7 @@ class CenterLossProp : public OperatorProperty {
       const std::vector<int> &out_grad,
       const std::vector<int> &in_data,
       const std::vector<int> &out_data) const override {
-      return {in_data[centerloss::kLabel]};
+      return {in_data[centerloss::kLabel], out_data[centerloss::kCenterDiff]};
     }
 
     std::vector<ResourceRequest> ForwardResource(

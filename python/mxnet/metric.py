@@ -511,6 +511,7 @@ def np(numpy_feval, name=None, allow_extra_outputs=False):
 # pylint: enable=invalid-name
 
 from .multi_label_metric import SubsetAccuracy, HammingLoss, AccuracyExam, RecallExam, PrecisionExam, F1Exam
+from .center_loss_metric import CenterLossMSE, CenterLossAccuracy
 
 def create(metric, **kwargs):
     """Create an evaluation metric.
@@ -552,6 +553,8 @@ def create(metric, **kwargs):
         'hamming': HammingLoss,
         'acc_subset': SubsetAccuracy,
         'accuracy_subset': SubsetAccuracy,
+        'center_loss_accuracy': CenterLossAccuracy,
+        'center_loss_mse': CenterLossMSE
     }
 
     try:

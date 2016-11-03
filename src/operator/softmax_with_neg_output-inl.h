@@ -35,6 +35,7 @@ struct SoftmaxWithNegativeOutputParam : public dmlc::Parameter<SoftmaxWithNegati
   bool preserve_shape;
   int normalization;
   bool out_grad;
+  bool ignore_negative;
   DMLC_DECLARE_PARAMETER(SoftmaxWithNegativeOutputParam) {
     DMLC_DECLARE_FIELD(grad_scale).set_default(1.0f)
     .describe("Scale the gradient by a float factor");
@@ -61,6 +62,9 @@ struct SoftmaxWithNegativeOutputParam : public dmlc::Parameter<SoftmaxWithNegati
     DMLC_DECLARE_FIELD(out_grad)
     .set_default(false)
     .describe("Apply weighting from output gradient");
+    DMLC_DECLARE_FIELD(ignore_negative)
+    .set_default(false)
+    .describe("If set to true, will ignore all samples with negative label and perform normal softmax");
   };
 };
 
@@ -126,9 +130,9 @@ class SoftmaxWithNegativeOutputOp : public Operator {
           in_grad[softmax_with_neg_enum::kData].get_with_shape<xpu, 2, DType>(data_shape, s);
     index_t valid_cnt = label.shape_.Size();
     if (param_.use_ignore) {
-        SoftmaxWithNegativeGrad(grad, out, label, DType(param_.neg_grad_scale), static_cast<DType>(param_.ignore_label));
+        SoftmaxWithNegativeGrad(grad, out, label, DType(param_.neg_grad_scale), static_cast<DType>(param_.ignore_label), param_.ignore_negative);
     } else {
-        SoftmaxWithNegativeGrad(grad, out, label, DType(param_.neg_grad_scale));
+        SoftmaxWithNegativeGrad(grad, out, label, DType(param_.neg_grad_scale), param_.ignore_negative);
     }
     if (param_.normalization == softmax_with_neg_enum::kBatch) {
         valid_cnt = label.size(0);
@@ -144,15 +148,15 @@ class SoftmaxWithNegativeOutputOp : public Operator {
           }
         }
         valid_cnt = valid_cnt == 0 ? 1 : valid_cnt;
-      } else {
-        valid_cnt = 1;
-      }
-      grad *= DType(param_.grad_scale / valid_cnt);
-      if (param_.out_grad) {
-        Tensor<xpu, 2, DType> ograd =
-          out_grad[softmax_with_neg_enum::kOut].get_with_shape<xpu, 2, DType>(data_shape, s);
-        grad *= ograd;
-      }
+    } else {
+      valid_cnt = 1;
+    }
+    grad *= DType(param_.grad_scale / valid_cnt);
+    if (param_.out_grad) {
+      Tensor<xpu, 2, DType> ograd =
+        out_grad[softmax_with_neg_enum::kOut].get_with_shape<xpu, 2, DType>(data_shape, s);
+      grad *= ograd;
+    }
   }
 
  private:
