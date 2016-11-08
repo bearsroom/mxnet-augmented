@@ -54,6 +54,8 @@ class Initializer(object):
             self._init_zero(name, arr)
         elif name.endswith("center_diff"):
             self._init_zero(name, arr)
+        elif name.endswith("label_count"):
+            self._init_zero(name, arr)
         else:
             self._init_default(name, arr)
     # pylint: disable=no-self-use, missing-docstring, invalid-name

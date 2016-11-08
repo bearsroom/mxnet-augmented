@@ -21,13 +21,13 @@ class CenterLossMSE(EvalMetric):
 
     def update(self, labels, preds):
         """ preds format: dimension (M, ), M examples, preds[i] = l2_norm(feat_i - center_vec(label[i])) """
-        check_label_shapes(labels, preds)
+        #check_label_shapes(labels, preds)
 
         label = labels[self.label_array_idx].asnumpy().astype('int32')
         dis_label = preds[self.label_array_idx].asnumpy()
 
         check_label_shapes(label, dis_label)
-        self.sum_metric += numpy.sum(dis_label) / 0.5
+        self.sum_metric += numpy.sum(dis_label) / 2
         #self.sum_metric += numpy.sum(dis_label * numpy.sign(label)) / 0.5
         self.num_inst += label.shape[0]
 
@@ -43,7 +43,7 @@ class CenterLossAccuracy(EvalMetric):
             self.label_array_idx = 0
 
     def update(self, labels, preds):
-        check_label_shapes(labels, preds)
+        #check_label_shapes(labels, preds)
 
         pred_label = ndarray.argmax_channel(preds[self.label_array_idx]).asnumpy().astype('int32')
         label = labels[self.label_array_idx].asnumpy().astype('int32')

@@ -22,7 +22,7 @@ namespace op {
 namespace centerloss {
 enum CenterLossOpInputs {kData, kLabel};
 enum CenterLossOpOutputs {kOut, kCenterDiff};
-enum CenterLossOpAuxiliary {kCenterVec};
+enum CenterLossOpAuxiliary {kCenterVec, kLabelCount};
 enum CenterLossOpResource {kTempSpace};
 } // centerloss
 
@@ -58,7 +58,7 @@ class CenterLossOp: public Operator {
       using namespace mshadow::expr;
       CHECK_GE(in_data.size(), 2) << "CenterLoss Input: [data, label]";
       CHECK_EQ(out_data.size(), 2) << "CenterLoss Output: [output, center_diff]";
-      CHECK_EQ(aux_states.size(), 1) << "CenterLoss Auxiliary states: [center_vec]";
+      CHECK_EQ(aux_states.size(), 2) << "CenterLoss Auxiliary states: [center_vec, label_count]";
       Stream<xpu> *s = ctx.get_stream<xpu>();
       const TShape& ishape = in_data[centerloss::kData].shape_;
 
@@ -73,25 +73,31 @@ class CenterLossOp: public Operator {
       Tensor<cpu, 1, DType> workspace = ctx.requested[centerloss::kTempSpace].get_host_space_typed<1, DType>(
                                         label.shape_);
       Copy(workspace, label, label.stream_);
+      Tensor<xpu, 1, DType> count = aux_states[centerloss::kLabelCount].get<xpu, 1, DType>(s);
+      Tensor<cpu, 1, DType> count_cpu = ctx.requested[centerloss::kTempSpace].get_host_space_typed<1, DType>(
+                                        count.shape_);
+      Copy(count_cpu, count, count.stream_);
+      count_cpu = DType(0.0f);
 
       if (param_.allow_negative_label) {
-        Tensor<cpu, 1, DType> abs_label = NewTensor<cpu, DType>(label.shape_, 0.0f);
+        Tensor<cpu, 1, DType> abs_label = ctx.requested[centerloss::kTempSpace].get_host_space_typed<1, DType>(label.shape_);
         abs_label = F<mshadow_op::abs>(workspace);
-        Tensor<xpu, 1, DType> sign_label = NewTensor<xpu, DType>(label.shape_, 0.0f, false, s);
-        sign_label = F<mshadow_op::ge_zero>(label);
         for (index_t i = 0; i < ishape[0]; i++) {
           index_t gt_label = static_cast<int>(abs_label[i]);
           diff[i] = data[i] - center_vec[gt_label];
+          count_cpu[gt_label] += DType(1.0f);
         }
-        diff *= broadcast<0>(sign_label, diff.shape_);
+        diff *= broadcast<0>(F<mshadow_op::ge_zero>(label), diff.shape_);
       } else { 
         for (index_t i = 0; i < ishape[0]; i++) {
           index_t gt_label = static_cast<int>(workspace[i]);
           diff[i] = data[i] - center_vec[gt_label];
+          count_cpu[gt_label] += DType(1.0f);
         }
       }
       out = sumall_except_dim<0>(F<mshadow_op::square>(diff));
       out = F<mshadow_op::square_root>(out);
+      Copy(count, count_cpu, count.stream_);
     }
 
     virtual void Backward(const OpContext &ctx,
@@ -124,29 +130,25 @@ class CenterLossOp: public Operator {
       Tensor<cpu, 1, DType> workspace = ctx.requested[centerloss::kTempSpace].get_host_space_typed<1, DType>(
                                         label.shape_);
       Copy(workspace, label, label.stream_);
+      Tensor<xpu, 1, DType> count = aux_states[centerloss::kLabelCount].get<xpu, 1, DType>(s);
 
-      Stream<xpu> *s2 = NewStream<xpu>();
-      Tensor<xpu, 2, DType> delta_c = NewTensor<xpu, DType>(Shape2(param_.num_classes, ishape.ProdShape(1, ishape.ndim())), 0.0f, false, s2);
-      Tensor<cpu, 1, DType> count_cpu = NewTensor<cpu, DType>(Shape1(param_.num_classes), 1.0f, false);
+      Tensor<xpu, 2, DType> delta_c = ctx.requested[centerloss::kTempSpace].get_space_typed<xpu, 2, DType>(Shape2(param_.num_classes, ishape.ProdShape(1, ishape.ndim())), s);
+      delta_c = DType(0.0f);
 
       if (param_.allow_negative_label) {
-        Tensor<cpu, 1, DType> abs_label = NewTensor<cpu, DType>(label.shape_, 0.0f);
+        Tensor<cpu, 1, DType> abs_label = ctx.requested[centerloss::kTempSpace].get_host_space_typed<1, DType>(label.shape_);
         abs_label = F<mshadow_op::abs>(workspace);
         for (index_t i = 0; i < ishape[0]; i++) {
           index_t gt_label = static_cast<int>(abs_label[i]);
           delta_c[gt_label] += diff[i];
-          count_cpu[gt_label] += DType(1.0f);
         }
       } else {
         for (index_t i = 0; i < ishape[0]; i++) {
           index_t gt_label = static_cast<int>(workspace[i]);
           delta_c[gt_label] += diff[i];
-          count_cpu[gt_label] += DType(1.0f);
         }
       }
-      Tensor<xpu, 1, DType> count_xpu = NewTensor<xpu, DType>(Shape1(param_.num_classes), 1.0f, false, s2);
-      Copy(count_xpu, count_cpu, count_xpu.stream_);
-      delta_c /= broadcast<0>(count_xpu, delta_c.shape_);
+      delta_c /= broadcast<0>(F<mshadow::op::plus>(count, DType(1.0f)), delta_c.shape_);
       delta_c *= DType(param_.center_update_scale);
       center_vec += delta_c;
     }
@@ -173,7 +175,7 @@ class CenterLossProp : public OperatorProperty {
     }
 
     std::vector<std::string> ListAuxiliaryStates() const override {
-      return {"center_vec"};
+      return {"center_vec", "label_count"};
     }
 
     void Init(const std::vector<std::pair<std::string, std::string> >& kwargs) override {
@@ -211,6 +213,7 @@ class CenterLossProp : public OperatorProperty {
       out_shape->push_back(Shape2(dshape[0], num_input));
       aux_shape->clear();
       aux_shape->push_back(Shape2(param_.num_classes, num_input));
+      aux_shape->push_back(Shape1(param_.num_classes));
       return true;
     }
 
@@ -233,6 +236,7 @@ class CenterLossProp : public OperatorProperty {
       out_type->push_back(dtype);
       out_type->push_back(dtype);
       aux_type->clear();
+      aux_type->push_back(dtype);
       aux_type->push_back(dtype);
       return true;
     }
